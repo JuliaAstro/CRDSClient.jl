@@ -21,7 +21,7 @@ end
     reference_path(name; instrument = nothing, observatory = nothing) -> String
 
 Where reference file `name` is (or would be) in the cache.  `instrument` is read from standard
-names (`roman_wfi_...`) when not given.
+names (`roman_wfi_...`), or for HST from legacy names as the Python client does, when not given.
 """
 function reference_path(name; instrument = nothing, observatory = nothing)
     obs = observatory === nothing ? observatory_of(name) : check_observatory(observatory)
@@ -30,10 +30,43 @@ function reference_path(name; instrument = nothing, observatory = nothing)
     m == "instrument" || throw(CRDSError("unsupported reference cache layout $(repr(m)) in $(cache_paths(obs).config)"))
     if instrument === nothing
         parts = split(name, '_')
-        (length(parts) >= 3 && lowercase(parts[1]) == obs) || throw(ArgumentError("cannot tell the instrument of $(repr(name)); pass `instrument`"))
-        instrument = parts[2]
+        instrument = obs == "hst" ? hst_instrument(name) : length(parts) >= 3 && lowercase(parts[1]) == obs ? parts[2] : nothing
+        instrument === nothing && throw(ArgumentError("cannot tell the instrument of $(repr(name)); pass `instrument`"))
     end
     return joinpath(cache_paths(obs).references, lowercase(string(instrument)), name)
+end
+
+# Instrument of an HST reference name, as the Python client's locate.instrument_from_refname: a
+# standard name (`hst_cos_spottab_0052.fits`) when its instrument is one of HST's, else the legacy
+# (CDBS) rule of siname.WhichCDBSInstrument: synphot tables have a "syn" or "th" part before the
+# extension (`hst_ota_007_syn.fits` too), other names end their first part in the instrument's letter
+# (`72m18219j_ccd.fits`: ACS).  `nothing` if none applies.
+const CDBS_INSTRUMENTS = Dict('j' => "acs", 'o' => "stis", 'n' => "nicmos", 'u' => "wfpc2", 'i' => "wfc3", 'l' => "cos", 'm' => "synphot")
+function hst_instrument(name)
+    parts = split(lowercase(basename(name)), ('_', '.'))
+    length(parts) >= 3 && parts[1] == "hst" && parts[2] in values(CDBS_INSTRUMENTS) && return String(parts[2])
+    any(in(("syn", "th")), parts[max(2, end - 1):end]) && return "synphot"
+    return isempty(parts[1]) ? nothing : get(CDBS_INSTRUMENTS, last(parts[1]), nothing)
+end
+
+"""
+    fetch_reference(name; observatory = nothing, instrument = nothing, mode = CRDSClient.default_mode()) -> String
+
+Local path of reference file `name`, downloading it (with size and sha1 checks) when it is not
+cached: a CRDS name (`"roman_wfi_dark_0001.asdf"`) or an HST name as a header records it
+(`"jref\$72m18219j_ccd.fits"`; the IRAF prefix is dropped, case is ignored).  HST names without
+such a prefix need `observatory = "hst"`.  Throws a `CRDSError` for a file CRDS has marked bad,
+unless `CRDS_ALLOW_BAD_REFERENCES` is set.
+"""
+function fetch_reference(name::AbstractString; observatory = nothing, instrument = nothing, mode::Symbol = default_mode())
+    check_mode(mode)
+    obs = observatory !== nothing ? check_observatory(observatory) : occursin('$', name) ? "hst" : observatory_of(name)
+    base = String(basename(last(split(name, '$'))))
+    obs == "hst" && (base = lowercase(base))     # HST names are case-insensitive; CRDS stores them in lower case
+    _check_bad(obs, [base], "reference file", "CRDS_ALLOW_BAD_REFERENCES", mode)
+    path = reference_path(base; instrument, observatory = obs)
+    fetch_references(obs, [(base, path)], mode)
+    return path
 end
 
 "Download the references in `files` (name => cache path) that are not cached."
@@ -91,8 +124,8 @@ function _bestrefs(header, context, reftypes, observatory, m)
             (m === :auto && e isa CRDSOfflineError) || rethrow()
         end
     end
-    m === :auto && !(obs in LOCAL_OBSERVATORIES) &&
-        _warn_once("hooks-$obs", "evaluating $obs rules locally (server unreachable): the Python client's $obs selection hooks are not applied, so some types may differ")
+    obs in LOCAL_OBSERVATORIES || throw(CRDSOfflineError("$obs best references need the CRDS server ($(server_url(obs))), " *
+        (m === :local ? "which mode = :local does not contact" : "which cannot be reached") * "; $obs rules are not evaluated locally"))
     results, used, instr = local_bestrefs(obs, ctx, hdr, reftypes, m)
     unsup = [t for (t, (s, _)) in results if s === :unsupported]
     if !isempty(unsup) && can_contact(obs, m)
@@ -128,9 +161,9 @@ where the rules make a type not applicable.  `header` is flat with the keys the 
 - `context`: a `.pmap` (`"roman_0058.pmap"`), `"latest"`/`"operational"`/`"edit"`/`"build"`, or a
   date; default `\$CRDS_CONTEXT`, else latest ([`resolve_context`](@ref)).
 - `reftypes`: types to look up (default: all of the instrument's).
-- `mode`: `:auto` evaluates the rules locally (Roman, JWST; HST uses the server) and asks the
-  server only for rules not supported here; `:local` never contacts the server; `:remote` lets
-  the server choose.
+- `mode`: `:auto` evaluates the rules locally (Roman, JWST) and asks the server only for rules
+  not supported here; `:local` never contacts the server; `:remote` lets the server choose.  HST
+  always uses the server: a `CRDSOfflineError` in `:local` mode or when it cannot be reached.
 - `strict = true` throws a [`CRDSLookupError`](@ref) listing every type without a match and why;
   `false` returns `"NOT FOUND <reason>"` for them instead.
 

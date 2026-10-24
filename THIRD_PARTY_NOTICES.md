@@ -23,6 +23,8 @@ Ported, as translated logic rather than copied code:
   `src/mappings.jl`.
 - `crds/roman/locate.py` (`dataset_to_ref_header`) and `crds/jwst/locate.py` (`fits_to_parkeys`) →
   `src/mappings.jl`, `src/jwst.jl`.
+- `crds/hst/siname.py` (`WhichCDBSInstrument`, the instrument letters) and `crds/hst/locate.py`
+  (`instrument_from_refname`): the instrument folder of an HST reference name → `src/api.jl`.
 - The doctests of `GlobMatcher`, `InequalityMatcher` and `VersionAfterSelector` → `test/runtests.jl`.
 
 ```

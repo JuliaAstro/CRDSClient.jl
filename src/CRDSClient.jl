@@ -16,7 +16,7 @@ import JSON
 import SHA
 using Scratch: @get_scratch!
 
-export best_references, get_references, resolve_context, required_parkeys, flatten_header, server_info,
+export best_references, get_references, fetch_reference, resolve_context, required_parkeys, flatten_header, server_info,
        cache_paths, reference_path, CRDSError, CRDSLookupError, CRDSOfflineError
 
 include("config.jl")

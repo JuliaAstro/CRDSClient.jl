@@ -43,7 +43,8 @@ const DEFAULT_SERVERS = Dict("hst" => "https://hst-crds.stsci.edu", "jwst" => "h
 # package implements, checked against the servers (test/server_compare.jl; 2026-10-24: Roman, all 68
 # contexts, 604,500 answers; JWST, 50 of 554 contexts, 1,019,800 answers with data-model keys and
 # again with FITS keywords; 0 mismatches).  HST rules contain Python expressions and the Python
-# client applies selection hooks for HST, neither reproduced here.
+# client applies selection hooks for HST, neither reproduced here, so HST lookups always go to the
+# server (an error when it cannot be used).
 const LOCAL_OBSERVATORIES = ("roman", "jwst")
 
 "Seconds allowed to establish a connection to the server (not the transfer)."

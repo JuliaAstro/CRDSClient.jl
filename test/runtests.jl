@@ -121,6 +121,30 @@ selector = $selector
     # rules this package does not evaluate are left to the server
     @test evaluate(rmap("SelectVersion({'<1' : 'x'})"), h("D1", "F1"))[1] === :unsupported
     @test evaluate(rmap("Match({})"; header_extra = "'rmap_relevance' : '(FILT != \"F1\")',"), h("D1", "F1"))[1] === :unsupported
+    @test evaluate(rmap("Match({})"; header_extra = "'comment_parkeys' : ('FILT',),"), h("D1", "F1"))[1] === :unsupported
+    # the step switch keyword is a required parameter, as in the Python client
+    @test "DQICORR" in rmap("Match({})"; header_extra = "'reffile_switch' : 'dqicorr',").parkeys
+end
+
+@testset "HST: reference names, offline lookups" begin
+    hst_instrument = CRDSClient.hst_instrument
+    @test hst_instrument("zas1615jl_spot.fits") == "cos"              # the Python client's doctests
+    @test hst_instrument("hst_cos_spottab_0052.fits") == "cos"
+    @test hst_instrument("72m18219j_ccd.fits") == "acs"
+    @test hst_instrument("hst_ota_007_syn.fits") == "synphot"         # "ota" is no instrument: legacy rule
+    @test hst_instrument("nic1_dqe_002_th.fits") == "synphot"
+    @test hst_instrument("foobar.fits") === nothing
+    r, c = mktempdir(), mktempdir()
+    withenv("CRDS_REFPATH_SINGLE" => r, "CRDS_CFGPATH_SINGLE" => c) do
+        @test reference_path("zas1615jl_spot.fits"; observatory = "hst") == joinpath(r, "cos", "zas1615jl_spot.fits")
+        @test_throws "pass `observatory`" reference_path("zas1615jl_spot.fits")
+        @test_throws "pass `instrument`" reference_path("foobar.fits"; observatory = "hst")
+        # a cached file needs no server, whatever the name's case or IRAF prefix
+        mkpath(joinpath(r, "acs")); touch(joinpath(r, "acs", "72m18219j_ccd.fits"))
+        @test fetch_reference("jref\$72M18219J_CCD.FITS"; mode = :local) == joinpath(r, "acs", "72m18219j_ccd.fits")
+        @test_throws CRDSOfflineError fetch_reference("jref\$72m1821aj_ccd.fits"; mode = :local)
+    end
+    @test_throws "hst best references need the CRDS server" best_references(Dict("INSTRUME" => "ACS"); context = "hst_1367.pmap", mode = :local)
 end
 
 @testset "VersionAfter (the Python client's doctests)" begin
@@ -241,6 +265,7 @@ withenv("CRDS_SERVER_URL" => nothing) do
             @test resolve_context("roman-2026-10-01") == "roman_0072.pmap"
             p = get_references(h; context = "roman_0072.pmap", reftypes = ["apcorr"])["apcorr"]   # a small file
             @test isfile(p) && endswith(p, joinpath("wfi", basename(p)))
+            @test fetch_reference(basename(p)) == p
             # local mode with nothing cached: a clear error, no network (the in-memory mapping and
             # server-information caches are cleared so the empty cache folders are what is seen)
             withenv("CRDS_MAPPATH_SINGLE" => mktempdir(), "CRDS_CFGPATH_SINGLE" => mktempdir()) do
@@ -249,6 +274,21 @@ withenv("CRDS_SERVER_URL" => nothing) do
                 @test_throws CRDSOfflineError resolve_context("latest"; observatory = "roman", mode = :local)
                 empty!(CRDSClient.MAPPINGS); empty!(CRDSClient.SESSION_INFO)
             end
+        end
+    end
+
+    @testset "live: HST through the server" begin
+        if !reachable("hst")
+            @test_skip "server unreachable"
+        else
+            # the archive's parameters for a 2024 ACS/WFC exposure
+            ctx, id = "hst_1367.pmap", "JECD49010:JECD49H2Q"
+            h = Dict(string(k) => string(v) for (k, v) in CRDSClient.rpc("hst", "get_dataset_headers_by_id", ctx, [id], nothing; mode = :auto)[id])
+            @test best_references(h; context = ctx, reftypes = ["ccdtab", "biasfile", "atodtab"]) ==
+                  Dict("ccdtab" => "72m18219j_ccd.fits", "biasfile" => "82f1617nj_bia.fits", "atodtab" => "N/A")
+            p = get_references(h; context = ctx, reftypes = ["ccdtab"])["ccdtab"]   # 49 kB
+            @test isfile(p) && p == fetch_reference("jref\$72m18219j_ccd.fits") == reference_path("72m18219j_ccd.fits"; observatory = "hst")
+            @test "DQICORR" in required_parkeys(ctx; instrument = "acs", reftypes = ["bpixtab"])
         end
     end
 end

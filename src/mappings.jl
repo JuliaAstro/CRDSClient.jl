@@ -45,6 +45,8 @@ function _unsupported_feature(h)
     isempty(get(h, "parkey_relevance", Dict())) || return "parkey_relevance"
     isempty(get(h, "hooks", Dict())) || return "hooks"
     uppercase(string(get(h, "reffile_switch", "NONE"))) == "NONE" || return "reffile_switch"
+    # comment parameters are made N/A at lookup by the Python client (map_irrelevant_parkeys_to_na)
+    isempty(get(h, "comment_parkeys", ())) || return "comment_parkeys"
     return nothing
 end
 
@@ -65,6 +67,9 @@ function parse_mapping(name, text; source = name)
         levels = pk isa Tuple && !isempty(pk) && first(pk) isa AbstractString ? (pk,) : pk   # one level or several
         keys = String[uppercase(string(p)) for lev in levels for p in lev]
         append!(keys, uppercase.(string.(collect(get(h, "extra_keys", ())))))
+        # the step switch keyword (e.g. DQICORR) is a required parameter, as in the Python client
+        sw = uppercase(string(get(h, "reffile_switch", "NONE")))
+        sw == "NONE" || push!(keys, sw)
         levels = Tuple(Tuple(uppercase(string(p)) for p in lev) for lev in levels)
         return ReferenceMapping(name, h, uppercase(string(h["instrument"])), lowercase(string(h["filekind"])), unique!(keys),
                                 build_selector(sel, levels, h), _unsupported_feature(h), uppercase(string(get(h, "reffile_required", "NONE"))))

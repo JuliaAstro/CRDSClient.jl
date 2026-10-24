@@ -33,6 +33,8 @@ best_references(header; context = "roman_0072.pmap", reftypes = ["epsf", "area"]
 # Dict("epsf" => "roman_wfi_epsf_0266.asdf", "area" => "roman_wfi_area_0034.asdf")
 
 paths = get_references(header; context = "roman_0072.pmap", reftypes = ["epsf", "area"])  # downloads if needed
+fetch_reference("roman_wfi_epsf_0266.asdf")   # one file by name, e.g. as a header records it
+fetch_reference("jref\$72m18219j_ccd.fits")   # HST names with their IRAF prefix work too
 
 required_parkeys("roman_0072.pmap"; reftypes = ["epsf"])   # the header keys the rules read
 resolve_context("roman-2026-10-01")                          # "roman_0072.pmap"
@@ -54,9 +56,11 @@ From a Roman L2 file's metadata tree (e.g. ASDF.jl's `af["roman"]["meta"]`):
 | `CRDS_OBSERVATORY` | Observatory when it cannot be told from the context or header |
 
 Modes: `:auto` evaluates rules locally (Roman, JWST) and asks the server only for rules this package does
-not evaluate; `:local` never contacts the server; `:remote` lets the server choose. HST uses the server in
-`:auto` mode: its rules contain Python expressions and the Python client applies instrument-specific
-selection hooks for it, neither of which is reproduced here.
+not evaluate; `:local` never contacts the server; `:remote` lets the server choose. HST best references
+always come from the server: its rules contain Python expressions and the Python client applies
+instrument-specific selection hooks for it, neither of which is reproduced here, so an HST lookup in
+`:local` mode or with the server unreachable is a `CRDSOfflineError`. Contexts, rule files,
+`required_parkeys` and checked, cached downloads (Python's folder layout) work for HST as for Roman and JWST.
 
 ## Contexts
 
@@ -115,5 +119,6 @@ Developed with AI assistance (Claude).
 `julia --project -e 'using Pkg; Pkg.test()'` runs offline unit tests (parser, matchers, selectors,
 cache paths, checked and concurrent downloads), then live comparisons with the Roman and JWST servers:
 300 random headers per context, drawn from the context's own rules, sent in one batched request and
-compared with local evaluation (`test/server_compare.jl`). The live tests use the normal cache, so rule
+compared with local evaluation (`test/server_compare.jl`), and an HST lookup and download through the
+server. The live tests use the normal cache, so rule
 files are downloaded on the first run only; an unreachable server, or `CRDSCLIENT_SKIP_ONLINE=1`, skips them.
