@@ -1,11 +1,15 @@
 using CRDSClient, Test, Logging, Random
 using CRDSClient: parse_literal, parse_assignments, Call, condition_value, pyfloatstr, reformat_date, matcher, match_value,
                   parse_mapping, choose, evaluate, LookupFailure, ValidationFailure, fetch_file, cache_paths
-import SHA
+import SHA, Aqua
 
 # Offline unit tests first, then live comparisons with the CRDS servers (skipped when unreachable).
 
 include("server_compare.jl")
+
+@testset "Aqua" begin
+    Aqua.test_all(CRDSClient)
+end
 
 const LIVE = Dict("roman" => ["roman_0040.pmap", "roman_0058.pmap", "roman_0072.pmap", "latest"],
                   "jwst" => ["jwst_1000.pmap", "jwst_1584.pmap", "latest"])
@@ -18,6 +22,20 @@ function reachable(obs)
     catch e
         @warn "$obs CRDS server unreachable: skipping its live tests" exception = e
         return false
+    end
+end
+
+# `f()` with an empty cache (and the in-memory mapping and server-information caches cleared), so
+# server information, file information and downloads go to the server even when the normal cache,
+# kept between runs (and between CI runs by julia-actions/cache), already has everything.
+function with_fresh_cache(f)
+    withenv("CRDS_MAPPATH_SINGLE" => mktempdir(), "CRDS_REFPATH_SINGLE" => mktempdir(), "CRDS_CFGPATH_SINGLE" => mktempdir()) do
+        empty!(CRDSClient.MAPPINGS); empty!(CRDSClient.SESSION_INFO)
+        try
+            f()
+        finally
+            empty!(CRDSClient.MAPPINGS); empty!(CRDSClient.SESSION_INFO)
+        end
     end
 end
 
@@ -174,18 +192,19 @@ end
     keys_ = ("CRDS_MAPPATH_SINGLE", "CRDS_MAPPATH", "CRDS_PATH_SINGLE", "CRDS_PATH", "CRDS_DEFAULT_CACHE",
              "CRDS_REFPATH_SINGLE", "CRDS_REFPATH", "CRDS_CFGPATH_SINGLE", "CRDS_CFGPATH")
     clear = [k => nothing for k in keys_]
+    j = joinpath    # the expected paths use the platform's separator, as the package does
     withenv(clear..., "CRDS_DEFAULT_CACHE" => "/d") do
-        @test cache_paths("roman").mappings == "/d/mappings/roman"
+        @test cache_paths("roman").mappings == j("/d", "mappings", "roman")
     end
     withenv(clear..., "CRDS_DEFAULT_CACHE" => "/d", "CRDS_PATH" => "/p") do
-        @test cache_paths("jwst") == (; mappings = "/p/mappings/jwst", references = "/p/references/jwst", config = "/p/config/jwst")
+        @test cache_paths("jwst") == (; mappings = j("/p", "mappings", "jwst"), references = j("/p", "references", "jwst"), config = j("/p", "config", "jwst"))
     end
     withenv(clear..., "CRDS_PATH" => "/p", "CRDS_PATH_SINGLE" => "/s") do
-        @test cache_paths("roman").references == "/s/references"
+        @test cache_paths("roman").references == j("/s", "references")
     end
     withenv(clear..., "CRDS_PATH_SINGLE" => "/s", "CRDS_MAPPATH" => "/m", "CRDS_REFPATH_SINGLE" => "/r") do
         c = cache_paths("roman")
-        @test c.mappings == "/m/roman" && c.references == "/r" && c.config == "/s/config"
+        @test c.mappings == j("/m", "roman") && c.references == "/r" && c.config == j("/s", "config")
     end
     withenv(clear..., "CRDS_MAPPATH" => "/m", "CRDS_MAPPATH_SINGLE" => "/ms") do
         @test cache_paths("roman").mappings == "/ms"
@@ -199,7 +218,8 @@ end
     src = mktempdir()
     payload = rand(UInt8, 3_000_000)
     write(joinpath(src, "f.bin"), payload)
-    url = "file://" * joinpath(src, "f.bin")
+    p = joinpath(src, "f.bin")
+    url = Sys.iswindows() ? "file:///" * replace(p, '\\' => '/') : "file://" * p   # file:///C:/... on Windows
     sha = bytes2hex(SHA.sha1(payload))
     dst = mktempdir()
     @test_throws CRDSError fetch_file("roman", url, joinpath(dst, "bad_size"); mode = :auto, size = 1, tries = 1)
@@ -219,10 +239,11 @@ end
 end
 # --- live tests: against the CRDS servers ---------------------------------------------------
 # Each observatory's tests are skipped (not failed) when its server cannot be reached, or when
-# CRDSCLIENT_SKIP_ONLINE=1.  They use the normal cache (CRDS_PATH etc., else the package's scratch
-# space), so the immutable rule files are downloaded once, not on every run; each comparison is one
-# batched request for all of a context's headers.  CRDS_SERVER_URL is unset here: each observatory
-# uses its own server.
+# CRDSCLIENT_SKIP_ONLINE=1.  The comparisons use the normal cache (CRDS_PATH etc., else the package's
+# scratch space), so the immutable rule files are downloaded once, not on every run; each comparison
+# is one batched request for all of a context's headers.  The server's other interfaces (server
+# information, file information, rule and reference downloads) are checked on a fresh cache every
+# run (`with_fresh_cache`).  CRDS_SERVER_URL is unset here: each observatory uses its own server.
 
 withenv("CRDS_SERVER_URL" => nothing) do
     for obs in ("roman", "jwst")
@@ -235,6 +256,11 @@ withenv("CRDS_SERVER_URL" => nothing) do
                     @test all(endswith(".pmap"), ctxs)
                     @test compare_contexts(ctxs; obs, n = 300, fits = obs == "jwst", io = devnull) == 0
                 end
+                # server information and the latest context's rule files, from the server
+                keys_ = with_fresh_cache() do
+                    required_parkeys(resolve_context("latest"; observatory = obs); instrument = obs == "jwst" ? "nircam" : nothing, reftypes = ["flat"])
+                end
+                @test (obs == "roman" ? "ROMAN.META.INSTRUMENT.DETECTOR" : "META.INSTRUMENT.DETECTOR") in keys_
             end
         end
     end
@@ -262,10 +288,12 @@ withenv("CRDS_SERVER_URL" => nothing) do
             @test occursin("value='WFI99' is not in", e.failures["area"])
             @test occursin("ROMAN.META.INSTRUMENT.DETECTOR", sprint(showerror, e))
             @test "ROMAN.META.EXPOSURE.START_TIME" in required_parkeys("roman_0058.pmap"; reftypes = ["epsf"])
-            @test resolve_context("roman-2026-10-01") == "roman_0072.pmap"
-            p = get_references(h; context = "roman_0072.pmap", reftypes = ["apcorr"])["apcorr"]   # a small file
-            @test isfile(p) && endswith(p, joinpath("wfi", basename(p)))
-            @test fetch_reference(basename(p)) == p
+            with_fresh_cache() do      # context history, rule files and a small reference, from the server
+                @test resolve_context("roman-2026-10-01") == "roman_0072.pmap"
+                p = get_references(h; context = "roman_0072.pmap", reftypes = ["apcorr"])["apcorr"]
+                @test isfile(p) && endswith(p, joinpath("wfi", basename(p)))
+                @test fetch_reference(basename(p)) == p
+            end
             # local mode with nothing cached: a clear error, no network (the in-memory mapping and
             # server-information caches are cleared so the empty cache folders are what is seen)
             withenv("CRDS_MAPPATH_SINGLE" => mktempdir(), "CRDS_CFGPATH_SINGLE" => mktempdir()) do
@@ -286,9 +314,11 @@ withenv("CRDS_SERVER_URL" => nothing) do
             h = Dict(string(k) => string(v) for (k, v) in CRDSClient.rpc("hst", "get_dataset_headers_by_id", ctx, [id], nothing; mode = :auto)[id])
             @test best_references(h; context = ctx, reftypes = ["ccdtab", "biasfile", "atodtab"]) ==
                   Dict("ccdtab" => "72m18219j_ccd.fits", "biasfile" => "82f1617nj_bia.fits", "atodtab" => "N/A")
-            p = get_references(h; context = ctx, reftypes = ["ccdtab"])["ccdtab"]   # 49 kB
-            @test isfile(p) && p == fetch_reference("jref\$72m18219j_ccd.fits") == reference_path("72m18219j_ccd.fits"; observatory = "hst")
-            @test "DQICORR" in required_parkeys(ctx; instrument = "acs", reftypes = ["bpixtab"])
+            with_fresh_cache() do      # server information, rule files and a 49 kB reference, from the server
+                p = get_references(h; context = ctx, reftypes = ["ccdtab"])["ccdtab"]
+                @test isfile(p) && p == fetch_reference("jref\$72m18219j_ccd.fits") == reference_path("72m18219j_ccd.fits"; observatory = "hst")
+                @test "DQICORR" in required_parkeys(ctx; instrument = "acs", reftypes = ["bpixtab"])
+            end
         end
     end
 end
