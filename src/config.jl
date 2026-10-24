@@ -77,6 +77,9 @@ check_mode(m) = m in (:auto, :local, :remote) ? m : throw(ArgumentError("mode mu
 
 env_flag(name) = lowercase(strip(get(ENV, name, "false"))) in ("1", "true", "t", "yes", "y", "on")
 
+"Whether the cache is read-only (`\$CRDS_READONLY_CACHE`, as in the Python client): nothing is downloaded or written to it."
+readonly_cache() = env_flag("CRDS_READONLY_CACHE")
+
 scratch_cache() = @get_scratch!("crds_cache")
 
 # The Python client's `_std_cache_path`, first definition winning, e.g. for mappings:

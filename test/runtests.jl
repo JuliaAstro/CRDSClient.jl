@@ -165,6 +165,29 @@ end
     @test_throws "hst best references need the CRDS server" best_references(Dict("INSTRUME" => "ACS"); context = "hst_1367.pmap", mode = :local)
 end
 
+@testset "read-only cache (CRDS_READONLY_CACHE)" begin
+    m, r, c = mktempdir(), mktempdir(), mktempdir()
+    write(joinpath(c, "crdsclient_server_info.json"), CRDSClient.JSON.json(Dict("observatory" => "roman", "latest_context" => "roman_0001.pmap")))
+    # an unusable server URL: any attempt to contact it would mark it unreachable
+    withenv("CRDS_READONLY_CACHE" => "1", "CRDS_MAPPATH_SINGLE" => m, "CRDS_REFPATH_SINGLE" => r, "CRDS_CFGPATH_SINGLE" => c,
+            "CRDS_SERVER_URL" => "http://127.0.0.1:9") do
+        empty!(CRDSClient.SESSION_INFO); empty!(CRDSClient.MAPPINGS); CRDSClient.reset_offline!()
+        age = CRDSClient.SERVER_INFO_MAX_AGE[]
+        CRDSClient.SERVER_INFO_MAX_AGE[] = CRDSClient.Dates.Second(0)       # the stored information counts as old
+        try
+            @test resolve_context("latest"; observatory = "roman", mode = :auto) == "roman_0001.pmap"   # kept, not refreshed
+            @test_throws "read-only (CRDS_READONLY_CACHE is set); mode = :remote lets the server choose instead" best_references(Dict("ROMAN.META.INSTRUMENT.NAME" => "WFI"); context = "roman_0001.pmap", mode = :auto)
+            @test_throws "the cache is read-only" fetch_reference("roman_wfi_dark_0001.asdf"; mode = :auto)
+            @test reference_path("roman_wfi_dark_0001.asdf") == joinpath(r, "wfi", "roman_wfi_dark_0001.asdf")
+            @test isempty(CRDSClient.UNREACHABLE)                                       # the server was never contacted
+            @test readdir(c) == ["crdsclient_server_info.json"] && isempty(readdir(m)) && isempty(readdir(r))   # nothing written
+        finally
+            CRDSClient.SERVER_INFO_MAX_AGE[] = age
+            empty!(CRDSClient.SESSION_INFO); empty!(CRDSClient.MAPPINGS); CRDSClient.reset_offline!()
+        end
+    end
+end
+
 @testset "VersionAfter (the Python client's doctests)" begin
     r = parse_mapping("jwst_system_t_0001.rmap", """
 header = {'filekind' : 'T', 'instrument' : 'SYSTEM', 'mapping' : 'REFERENCE', 'name' : 'jwst_system_t_0001.rmap',
@@ -226,6 +249,8 @@ end
     @test_throws CRDSError fetch_file("roman", url, joinpath(dst, "bad_sha"); mode = :auto, sha1sum = "0"^40, tries = 1)
     @test !isfile(joinpath(dst, "bad_size")) && !isfile(joinpath(dst, "bad_sha"))
     @test_throws CRDSOfflineError fetch_file("roman", url, joinpath(dst, "local"); mode = :local)
+    # a cache folder that cannot be created (here: under a file) is named, with what to do about it
+    @test_throws "cannot write f.bin to the CRDS cache" fetch_file("roman", url, joinpath(touch(tempname()), "refs", "f.bin"); mode = :auto)
     logger = Test.TestLogger()
     dest = joinpath(dst, "f.bin")
     with_logger(logger) do
@@ -288,6 +313,15 @@ withenv("CRDS_SERVER_URL" => nothing) do
             @test occursin("value='WFI99' is not in", e.failures["area"])
             @test occursin("ROMAN.META.INSTRUMENT.DETECTOR", sprint(showerror, e))
             @test "ROMAN.META.EXPOSURE.START_TIME" in required_parkeys("roman_0058.pmap"; reftypes = ["epsf"])
+            # a cache that cannot be written (here its configuration folder would lie under a file)
+            # costs a warning, not the lookup, when the server information is refreshed
+            blocked = joinpath(touch(tempname()), "config")
+            withenv("CRDS_CFGPATH_SINGLE" => blocked) do
+                empty!(CRDSClient.SESSION_INFO)
+                res = @test_logs (:warn, r"cannot write to the CRDS cache") match_mode = :any best_references(h; context = "roman_0058.pmap", reftypes = ["epsf"])
+                @test res == Dict("epsf" => "roman_wfi_epsf_0266.asdf")
+                empty!(CRDSClient.SESSION_INFO)
+            end
             with_fresh_cache() do      # context history, rule files and a small reference, from the server
                 @test resolve_context("roman-2026-10-01") == "roman_0072.pmap"
                 p = get_references(h; context = "roman_0072.pmap", reftypes = ["apcorr"])["apcorr"]

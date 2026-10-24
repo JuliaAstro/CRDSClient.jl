@@ -54,6 +54,7 @@ From a Roman L2 file's metadata tree (e.g. ASDF.jl's `af["roman"]["meta"]`):
 | `CRDS_MODE` | Default `mode`: `auto`, `local`, `remote` |
 | `CRDS_ALLOW_BAD_RULES`, `CRDS_ALLOW_BAD_REFERENCES` | Use files CRDS has marked bad (warning instead of error) |
 | `CRDS_OBSERVATORY` | Observatory when it cannot be told from the context or header |
+| `CRDS_READONLY_CACHE` | The cache is read-only, e.g. one shared on a cluster: nothing is downloaded or written, and its stored server information is used however old (see below) |
 
 Modes: `:auto` evaluates rules locally (Roman, JWST) and asks the server only for rules this package does
 not evaluate; `:local` never contacts the server; `:remote` lets the server choose. HST best references
@@ -103,6 +104,13 @@ cached, a reference file, or server information (current contexts, bad files) ol
 `CRDSClient.SERVER_INFO_MAX_AGE[]` (24 h). A failure to connect (capped at `CRDSClient.CONNECT_TIMEOUT[]`,
 5 s) marks the server unreachable for the session, so later calls work from the cache without waiting
 (`CRDSClient.reset_offline!()` to retry).
+
+**Shared and read-only caches.** A cache filled once and read by many jobs (e.g. on a cluster) can be
+marked with `CRDS_READONLY_CACHE=1`, as for the Python client: files it lacks are an error rather than
+a download, nothing is written to it, and the server information stored in it is used however old, so
+`"latest"` means the newest context the cache was filled with. Lookups may still ask the server (HST,
+`:remote`), which needs no writes. Without the setting, a cache that turns out not to be writable costs
+a warning when server information is refreshed, not the lookup.
 
 ## Acknowledgements
 

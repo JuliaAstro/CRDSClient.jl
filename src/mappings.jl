@@ -90,7 +90,7 @@ _base_url(obs, which, mode) = (u = get(get(server_info(obs; mode), which, Dict()
 function fetch_mappings(obs, names, mode)
     missing_names = filter(n -> !isfile(mapping_path(obs, n)), unique(names))
     isempty(missing_names) && return
-    _require_contact(obs, "rule files $(join(missing_names, ", ")) (not in the cache)", mode)
+    _require_download(obs, "rule files $(join(missing_names, ", ")) (not in the cache)", mode; hint = "; mode = :remote lets the server choose instead")
     info = file_info(obs, missing_names, mode)
     base = _base_url(obs, "mapping_url", mode)
     for n in missing_names

@@ -40,6 +40,8 @@ The CRDS server's information for `observatory`: `latest_context`, `operational_
 `edit_context`, `build_context`, `context_history`, `bad_files_list`, download URLs.  Read from the
 cache when it is younger than `CRDSClient.SERVER_INFO_MAX_AGE[]` (or the server is unreachable),
 else fetched; `refresh = true` fetches when possible.  `mode = :local` never contacts the server.
+A read-only cache (`CRDS_READONLY_CACHE`) keeps the information it holds, however old (except with
+`refresh` or `mode = :remote`), so `"latest"` names the newest context it was filled with.
 """
 function server_info(observatory; refresh::Bool = false, mode::Symbol = default_mode())
     obs = check_observatory(observatory)
@@ -49,14 +51,16 @@ end
 function _server_info(obs, refresh, mode)
     !refresh && haskey(SESSION_INFO, obs) && return SESSION_INFO[obs]
     stored = _stored_info(obs)
-    fresh = stored !== nothing && Dates.now(Dates.UTC) - stored.time < SERVER_INFO_MAX_AGE[]
+    # a read-only cache keeps its own server information, as in the Python client, so its "latest"
+    # context is one whose rules it holds
+    fresh = stored !== nothing && ((readonly_cache() && mode !== :remote) || Dates.now(Dates.UTC) - stored.time < SERVER_INFO_MAX_AGE[])
     if (refresh || !fresh) && can_contact(obs, mode)
         try
             info = rpc(obs, "get_server_info"; mode)
             lowercase(string(info["observatory"])) == obs ||
                 throw(CRDSError("$(server_url(obs)) is the CRDS server for $(info["observatory"]), not $obs; check CRDS_SERVER_URL"))
             info = Dict{String, Any}(k => info[k] for k in INFO_KEYS if haskey(info, k))
-            write_atomic(_info_file(obs), JSON.json(info))
+            save_config(_info_file(obs), JSON.json(info))
             return SESSION_INFO[obs] = info
         catch e
             e isa CRDSOfflineError || rethrow()

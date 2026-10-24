@@ -13,7 +13,7 @@ function _ref_subdir_mode(obs)
     f = joinpath(p.config, "ref_cache_subdir_mode")
     isfile(f) && return strip(read(f, String))
     m = isdir(p.references) && length(readdir(p.references)) > 20 ? "flat" : "instrument"
-    write_atomic(f, m)
+    save_config(f, m)
     return m
 end
 
@@ -73,7 +73,7 @@ end
 function fetch_references(obs, files, mode)
     todo = [(n, p) for (n, p) in files if !isfile(p)]
     isempty(todo) && return
-    _require_contact(obs, "reference files $(join(first.(todo), ", ")) (not in the cache)", mode)
+    _require_download(obs, "reference files $(join(first.(todo), ", ")) (not in the cache)", mode)
     info = file_info(obs, first.(todo), mode)
     base = _base_url(obs, "reference_url", mode)
     for (n, p) in todo

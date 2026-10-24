@@ -120,6 +120,18 @@ to a `.part` file next to it, with its size and sha1 checked when given, then re
 Retries transient failures; an unreachable server is not retried.
 """
 function fetch_file(obs, url, dest; mode::Symbol, size = nothing, sha1sum = nothing, tries = 3)
+    try
+        _fetch_file(obs, url, dest, mode, size, sha1sum, tries)
+    catch e
+        # the folder, lock or file could not be written: name the cache and what to do about it
+        e isa Union{SystemError, Base.IOError} || rethrow()
+        throw(CRDSError("cannot write $(basename(dest)) to the CRDS cache at $(dirname(dest)) ($(sprint(showerror, e))). " *
+                        "If that cache is not writable, point CRDS_PATH (or another CRDS_*PATH variable) at a writable folder, " *
+                        "or, for a shared cache that already holds the files you need, set CRDS_READONLY_CACHE=1"))
+    end
+end
+
+function _fetch_file(obs, url, dest, mode, size, sha1sum, tries)
     with_file_lock(dest) do
         isfile(dest) && return dest                     # fetched while we waited for the lock
         _require_contact(obs, "downloading $(basename(dest))", mode)
@@ -152,6 +164,28 @@ function write_atomic(path, text)
     tmp = joinpath(dirname(path), ".$(basename(path)).$(getpid()).$(objectid(current_task())).tmp")
     write(tmp, text)
     return _replace(tmp, path)
+end
+
+# A small configuration file for the cache (server information, folder layout): never written to a
+# read-only cache, and a cache that cannot be written (e.g. a shared one) costs a warning, not the
+# lookup, as in the Python client.  Returns whether it was written.
+function save_config(path, text)
+    readonly_cache() && return false
+    try
+        write_atomic(path, text)
+        return true
+    catch e
+        e isa Union{SystemError, Base.IOError} || rethrow()
+        _warn_once("unwritable-" * dirname(path), "cannot write to the CRDS cache at $(dirname(path)) ($(sprint(showerror, e))); " *
+                   "continuing without saving there (set CRDS_READONLY_CACHE=1 for a read-only cache)")
+        return false
+    end
+end
+
+# Before downloading `what` into the cache: refused for a read-only cache; needs the server.
+function _require_download(obs, what, mode; hint = "")
+    readonly_cache() && throw(CRDSError("$what cannot be downloaded: the cache is read-only (CRDS_READONLY_CACHE is set)" * hint))
+    _require_contact(obs, what, mode)
 end
 
 # Server's size and sha1 of `names` (one RPC), as Dict(name => (size, sha1sum)).
