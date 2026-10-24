@@ -1,0 +1,12 @@
+[deps]
+CRDSClient = "6458d4f6-0820-4bb1-bd52-c1d3c0bd6efc"
+Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[sources]
+CRDSClient = {path = ".."}
+
+[compat]
+SHA = "0.7, 1"
