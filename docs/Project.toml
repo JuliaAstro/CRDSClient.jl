@@ -1,0 +1,9 @@
+[deps]
+CRDSClient = "6458d4f6-0820-4bb1-bd52-c1d3c0bd6efc"
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+
+[sources]
+CRDSClient = {path = ".."}
+
+[compat]
+Documenter = "1"

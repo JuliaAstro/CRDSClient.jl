@@ -1,5 +1,11 @@
 # CRDSClient.jl
 
+[![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://juliaastro.org/CRDSClient/stable/)
+[![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://juliaastro.org/CRDSClient.jl/dev/)
+[![CI](https://github.com/JuliaAstro/CRDSClient.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/JuliaAstro/CRDSClient.jl/actions/workflows/CI.yml)
+[![codecov](https://codecov.io/gh/JuliaAstro/CRDSClient.jl/graph/badge.svg)](https://codecov.io/gh/JuliaAstro/CRDSClient.jl)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A Julia client for STScI's [Calibration Reference Data System](https://hst-crds.stsci.edu/static/users_guide/index.html)
 (CRDS): which reference files (ePSFs, flats, darks, pixel area maps, ...) apply to an exposure, and those
 files in a local cache.
